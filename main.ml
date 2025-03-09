@@ -80,7 +80,8 @@ let rec beta_reduce t = match t with
                                      constrs = List.map (fun (n,t) -> (n, beta_reduce t)) i.constrs}
     | Constr (n, i, ts) -> Constr (n, i, List.map beta_reduce ts)
     | Ind (i, t, ts, r) -> Ind (i, beta_reduce t, List.map beta_reduce ts, beta_reduce r)
-    | t -> t
+    | Var x -> Var x
+    | Universe l -> Universe l
 
 (* Eta reduction - one step *)
 let rec eta_reduce t = match t with
@@ -92,7 +93,8 @@ let rec eta_reduce t = match t with
                                      constrs = List.map (fun (n,t) -> (n, eta_reduce t)) i.constrs}
     | Constr (n, i, ts) -> Constr (n, i, List.map eta_reduce ts)
     | Ind (i, t, ts, r) -> Ind (i, eta_reduce t, List.map eta_reduce ts, eta_reduce r)
-    | t -> t
+    | Var x -> Var x
+    | Universe l -> Universe l
 (* Full normalization *)
 let rec normalize ?(depth=100) t =
     if depth <= 0 then t  (* Гранична умова: зупинка при великій глибині *)
@@ -177,20 +179,21 @@ let () =
     print_endline "Test capture (should avoid capture): ";
     print_endline (string_of_term (normalize test_capture));
     let tests = [
-        ("test_higher_universe", test_higher_universe);
-        ("test_nested_pi", test_nested_pi);
-        ("test_no_reduction", test_no_reduction);
-        ("test_list_cons", test_list_cons);
-        ("test_double_shadow", test_double_shadow);
-        ("test_eta_pi", test_eta_pi);
-        ("test_recursive_ind", test_recursive_ind);
-        ("test_pi_codomain", test_pi_codomain);
-        ("test_complex_ind", test_complex_ind);
-        ("test_redundant_lam", test_redundant_lam)
+        ("test_higher_universe", test_higher_universe, "U0");
+        ("test_nested_pi", test_nested_pi, {|Pi ("x", Universe 0, Pi ("y", Var "x", Universe 0))|});
+        ("test_no_reduction", test_no_reduction, {|App (Var "f", App (Var "g", Var "h"))|});
+        ("test_list_cons", test_list_cons, {|Constr (1, list_inductive, [Var "a"; Constr (0, list_inductive, [])])|});
+        ("test_double_shadow", test_double_shadow, {|Var "z"|});
+        ("test_eta_pi", test_eta_pi, {| Var "f" |});
+        ("test_recursive_ind", test_recursive_ind, {| Constr (1, nat_inductive, [Constr (1, nat_inductive, [Constr (0, nat_inductive, [])])]) |});
+        ("test_pi_codomain", test_pi_codomain, {| Pi ("x", Universe 0, Var "x") |});
+        ("test_complex_ind", test_complex_ind, {| Ind (nat_inductive, Var "P", [Var "base"; Lam ("n", Universe 0, Var "n")], Constr (1, nat_inductive, [Constr (0, nat_inductive, [])])) |});
+        ("test_redundant_lam", test_redundant_lam, {|Lam ("x", Universe 0, Lam ("y", Universe 0, Var "z")) |})
     ] in
-    List.iter (fun (name, t) ->
-        Printf.printf "%s:\nOriginal: %s\nNormalized: %s\n\n" 
+    List.iter (fun (name, t, expected) ->
+        Printf.printf "%s:\nOriginal: %s\nNormalized: %s\nExpected %s\n\n" 
             name 
             (string_of_term t) 
             (string_of_term (normalize t))
+            expected
     ) tests
