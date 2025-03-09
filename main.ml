@@ -113,7 +113,9 @@ let rec string_of_term = function
     | App (t1, t2) -> "(" ^ string_of_term t1 ^ " " ^ string_of_term t2 ^ ")"
     | Inductive i -> "Inductive " ^ i.name
     | Constr (n, _, ts) -> "Constr" ^ string_of_int n ^ "(" ^ String.concat "," (List.map string_of_term ts) ^ ")"
-    | Ind (i, t, _, _) -> "Ind(" ^ i.name ^ "," ^ string_of_term t ^ ")"
+    | Ind (i, t, ts, r) -> 
+        let ts_str = String.concat "," (List.map string_of_term ts) in
+        "Ind(" ^ i.name ^ "," ^ string_of_term t ^ ",[" ^ ts_str ^ "]," ^ string_of_term r ^ ")"
 
 (* Test examples *)
 let test1 = App (Lam ("x", Universe 0, Var "x"), Universe 1)  (* (λx:U0.x) U1 *)
@@ -156,10 +158,13 @@ let test_double_shadow = App (App (Lam ("x", Universe 0, Lam ("x", Universe 0, V
 let test_eta_pi = Lam ("x", Universe 0, App (Var "f", Var "x"))
 let test_recursive_ind = Constr (1, nat_inductive, [Constr (1, nat_inductive, [App (Lam ("x", Universe 0, Var "x"), Constr (0, nat_inductive, []))])])
 let test_pi_codomain = Pi ("x", Universe 0, App (Lam ("y", Universe 0, Var "x"), Var "z"))
-let test_complex_ind = Ind (nat_inductive, 
+(* let test_complex_ind = Ind (nat_inductive, 
                             Var "P", 
                             [Var "base"; App (Lam ("n", Universe 0, App (Lam ("ih", Universe 0, Var "ih"), Var "n")), Var "m")], 
-                            Constr (1, nat_inductive, [Constr (0, nat_inductive, [])]))
+                            Constr (1, nat_inductive, [Constr (0, nat_inductive, [])])) *)
+
+(* let test_complex_ind = Ind (nat_inductive, Var "P", [Var "base"; Var "step"], Constr (0, nat_inductive, [])) *)
+let test_complex_ind  = Ind (nat_inductive, Var "P", [Var "base"; Lam ("n", Universe 0, Var "n")], Constr (1, nat_inductive, [Constr (0, nat_inductive, [])]))
 
 let test_redundant_lam = Lam ("x", Universe 0, Lam ("y", Universe 0, Var "z"))
 
