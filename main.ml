@@ -67,21 +67,39 @@ and free_vars t =
   
   let subst x v t = subst x v t (free_vars t)
 
-(* Beta reduction - one step *)
+let rec apply_term t args = match args with
+  | [] -> t
+  | arg :: rest -> apply_term (App (t, arg)) rest
+
+(* Beta reduction - one step, now including iota-reduction *)
 let rec beta_reduce t = match t with
-    | App (Lam (x, _, t1), t2) -> subst x t2 t1
-    | App (t1, t2) -> 
-        let t1' = beta_reduce t1 in
-        if t1' != t1 then App (t1', t2)
-        else App (t1', beta_reduce t2)
-    | Pi (x, a, b) -> Pi (x, beta_reduce a, beta_reduce b)
-    | Lam (x, a, t) -> Lam (x, beta_reduce a, beta_reduce t)
-    | Inductive i -> Inductive {i with params = List.map (fun (n,t) -> (n, beta_reduce t)) i.params;
-                                     constrs = List.map (fun (n,t) -> (n, beta_reduce t)) i.constrs}
-    | Constr (n, i, ts) -> Constr (n, i, List.map beta_reduce ts)
-    | Ind (i, t, ts, r) -> Ind (i, beta_reduce t, List.map beta_reduce ts, beta_reduce r)
-    | Var x -> Var x
-    | Universe l -> Universe l
+  | App (Lam (x, _, t1), t2) -> subst x t2 t1
+  | App (t1, t2) -> 
+      let t1' = beta_reduce t1 in
+      if t1' != t1 then App (t1', t2)
+      else App (t1', beta_reduce t2)
+  | Pi (x, a, b) -> Pi (x, beta_reduce a, beta_reduce b)
+  | Lam (x, a, t) -> Lam (x, beta_reduce a, beta_reduce t)
+  | Inductive i -> Inductive {i with params = List.map (fun (n,t) -> (n, beta_reduce t)) i.params;
+                                   constrs = List.map (fun (n,t) -> (n, beta_reduce t)) i.constrs}
+  | Constr (n, i, ts) -> Constr (n, i, List.map beta_reduce ts)
+  | Ind (i, motive, branches, scrutinee) -> (
+      let scrutinee' = beta_reduce scrutinee in
+      match scrutinee' with
+      | Constr (n, _, args) when n < List.length branches ->
+          (* Iota-reduction: apply the n-th branch to the constructor arguments *)
+          let branch = List.nth branches n in
+          apply_term branch args
+      | _ ->
+          (* If scrutinee is not a constructor yet, reduce it further *)
+          let motive' = beta_reduce motive in
+          let branches' = List.map beta_reduce branches in
+          if motive' != motive || branches' != branches || scrutinee' != scrutinee
+          then Ind (i, motive', branches', scrutinee')
+          else t
+    )
+  | Var x -> Var x
+  | Universe l -> Universe l
 
 (* Eta reduction - one step *)
 let rec eta_reduce t = match t with
@@ -137,10 +155,6 @@ let nat_inductive = {
     ]
 }
 let test_constr_multi = Constr (1, nat_inductive, [App (Lam ("x", Universe 0, Var "x"), Constr (0, nat_inductive, []))])
-let test_ind_case = Ind (nat_inductive, 
-                         Var "P", 
-                         [App (Lam ("x", Universe 0, Var "x"), Var "base"); Var "step"], 
-                         Constr (0, nat_inductive, []))
 let test_higher_universe = App (Lam ("x", Universe 1, Var "x"), Universe 0)
 let test_nested_pi = Pi ("x", Universe 0, Pi ("y", App (Lam ("z", Universe 0, Var "z"), Var "x"), Universe 0))
 let test_no_reduction = App (Var "f", App (Var "g", Var "h"))
@@ -158,15 +172,43 @@ let test_double_shadow = App (App (Lam ("x", Universe 0, Lam ("x", Universe 0, V
 let test_eta_pi = Lam ("x", Universe 0, App (Var "f", Var "x"))
 let test_recursive_ind = Constr (1, nat_inductive, [Constr (1, nat_inductive, [App (Lam ("x", Universe 0, Var "x"), Constr (0, nat_inductive, []))])])
 let test_pi_codomain = Pi ("x", Universe 0, App (Lam ("y", Universe 0, Var "x"), Var "z"))
-(* let test_complex_ind = Ind (nat_inductive, 
-                            Var "P", 
-                            [Var "base"; App (Lam ("n", Universe 0, App (Lam ("ih", Universe 0, Var "ih"), Var "n")), Var "m")], 
-                            Constr (1, nat_inductive, [Constr (0, nat_inductive, [])])) *)
-
-(* let test_complex_ind = Ind (nat_inductive, Var "P", [Var "base"; Var "step"], Constr (0, nat_inductive, [])) *)
-let test_complex_ind  = Ind (nat_inductive, Var "P", [Var "base"; Lam ("n", Universe 0, Var "n")], Constr (1, nat_inductive, [Constr (0, nat_inductive, [])]))
+let test_complex_ind = Ind (nat_inductive, Var "P", [Var "base"; Lam ("n", Universe 0, Var "n")], Constr (1, nat_inductive, [Constr (0, nat_inductive, [])]))
 
 let test_redundant_lam = Lam ("x", Universe 0, Lam ("y", Universe 0, Var "z"))
+let test_ind_case = Ind (nat_inductive, 
+                         Var "P", 
+                         [App (Lam ("x", Universe 0, Var "x"), Var "base"); Var "step"], 
+                         Constr (0, nat_inductive, []))
+
+
+                         let test_ind_zero_branch = Ind (nat_inductive, 
+                         Var "P", 
+                         [Var "zero_case"; Var "succ_case"], 
+                         Constr (0, nat_inductive, []))
+let test_ind_succ_branch = Ind (nat_inductive, 
+                         Var "P", 
+                         [Var "zero_case"; Var "succ_case"], 
+                         Constr (1, nat_inductive, [Constr (0, nat_inductive, [])]))
+let test_ind_succ_with_beta = Ind (nat_inductive, 
+                            Var "P", 
+                            [Var "zero_case"; Lam ("n", Universe 0, App (Var "f", Var "n"))], 
+                            Constr (1, nat_inductive, [Var "m"]))
+let test_ind_list_nil = Ind (list_inductive, 
+                      Var "P", 
+                      [Var "nil_case"; Var "cons_case"], 
+                      Constr (0, list_inductive, []))
+let test_ind_list_cons = Ind (list_inductive, 
+                       Var "P", 
+                       [Var "nil_case"; Lam ("x", Universe 0, Lam ("xs", Inductive list_inductive, App (Var "f", Var "x")))], 
+                       Constr (1, list_inductive, [Var "a"; Constr (0, list_inductive, [])]))
+let test_ind_complex_branch = Ind (nat_inductive, 
+                            Var "P", 
+                            [Var "zero_case"; Lam ("n", Universe 0, App (Lam ("x", Universe 0, Var "n"), Var "z"))], 
+                            Constr (1, nat_inductive, [Constr (0, nat_inductive, [])]))
+let test_ind_no_reduction = Ind (nat_inductive, 
+                          Var "P", 
+                          [Var "zero_case"; Var "succ_case"], 
+                          Var "n")  (* Scrutinee not a constructor *)
 
 
 
@@ -193,7 +235,26 @@ let () =
         ("test_recursive_ind", test_recursive_ind, {| Constr (1, nat_inductive, [Constr (1, nat_inductive, [Constr (0, nat_inductive, [])])]) |});
         ("test_pi_codomain", test_pi_codomain, {| Pi ("x", Universe 0, Var "x") |});
         ("test_complex_ind", test_complex_ind, {| Ind (nat_inductive, Var "P", [Var "base"; Lam ("n", Universe 0, Var "n")], Constr (1, nat_inductive, [Constr (0, nat_inductive, [])])) |});
-        ("test_redundant_lam", test_redundant_lam, {|Lam ("x", Universe 0, Lam ("y", Universe 0, Var "z")) |})
+        ("test_redundant_lam", test_redundant_lam, {|Lam ("x", Universe 0, Lam ("y", Universe 0, Var "z")) |});
+        ("test_ind_case", test_ind_case, {| base |});
+        ("test_higher_universe", test_higher_universe, "U0");
+        ("test_nested_pi", test_nested_pi, "Π(x:U0).Π(y:x).U0");
+        ("test_no_reduction", test_no_reduction, "(f (g h))");
+        ("test_list_cons", test_list_cons, "Constr1(list_inductive,a,Constr0(list_inductive,))");
+        ("test_double_shadow", test_double_shadow, "z");
+        ("test_eta_pi", test_eta_pi, "f");
+        ("test_recursive_ind", test_recursive_ind, "Constr1(nat_inductive,Constr1(nat_inductive,Constr0(nat_inductive,)))");
+        ("test_pi_codomain", test_pi_codomain, "Π(x:U0).x");
+        ("test_complex_ind", test_complex_ind, "Constr0(nat_inductive,)");
+        ("test_redundant_lam", test_redundant_lam, "λ(x:U0).λ(y:U0).z");
+        ("test_ind_zero_branch", test_ind_zero_branch, "zero_case");
+        ("test_ind_succ_branch", test_ind_succ_branch, "succ_case");
+        ("test_ind_succ_with_beta", test_ind_succ_with_beta, "(f m)");
+        ("test_ind_list_nil", test_ind_list_nil, "nil_case");
+        ("test_ind_list_cons", test_ind_list_cons, "(f a)");
+        ("test_ind_complex_branch", test_ind_complex_branch, "Constr0(nat_inductive,)");
+        ("test_ind_no_reduction", test_ind_no_reduction, "Ind(Nat,P,[zero_case;succ_case],n)")
+
     ] in
     List.iter (fun (name, t, expected) ->
         Printf.printf "%s:\nOriginal: %s\nNormalized: %s\nExpected %s\n\n" 
